@@ -25,20 +25,22 @@ mkdir -p "$CACHE_DIR"
 compile_settings() {
     echo "Regenerating configurations from templates..."
 
-    # Hash existing .conf files to prevent unnecessary screen flashing
-    OLD_HASH=$(md5sum "$CONF_DIR"/*.conf 2>/dev/null | md5sum)
+    # Hash existing configs before any changes, split by monitor vs non-monitor.
+    # This means a pure uiScale/wallpaperDir/weatherApiKey write never triggers a reload.
+    OLD_NONMON_HASH=$(md5sum "$SETTINGS_CONF" "$KEYBINDS_CONF" "$AUTOSTART_CONF" "$ENV_CONF" 2>/dev/null | md5sum)
+    OLD_MON_HASH=$(md5sum "$MONITORS_CONF" 2>/dev/null | md5sum)
 
     # Read state from JSON (Using 'has' to safely parse booleans)
     LANG=$(jq -r '.language // "us"' "$SETTINGS_FILE")
     KB_OPT=$(jq -r '.kbOptions // "grp:alt_shift_toggle"' "$SETTINGS_FILE")
     WP_DIR=$(jq -r '.wallpaperDir // empty' "$SETTINGS_FILE")
-    
+
     # Safely parse booleans so "false" doesn't trigger a fallback
     GUIDE_STARTUP=$(jq -r 'if has("openGuideAtStartup") then .openGuideAtStartup else true end' "$SETTINGS_FILE")
-    
+
     PIC_DIR="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")"
     VID_DIR="$(xdg-user-dir VIDEOS 2>/dev/null || echo "$HOME/Videos")"
-    
+
     # Read the hardware variables injected by install.sh directly out of the JSON
     HW_ENV=$(jq -r '.hardwareEnvs[]? // empty' "$SETTINGS_FILE")
 
@@ -49,7 +51,7 @@ compile_settings() {
         -e "s|{{WALLPAPER_DIR}}|$WP_DIR|g" \
         -e "s|{{SCRIPT_DIR}}|$HOME/.config/hypr/scripts|g" \
         "$TMPL_DIR/env.conf.template" > "${ENV_CONF}.tmp"
-    
+
     # Use awk to safely substitute the multi-line HW_ENV array without breaking escapes
     awk -v hw="$HW_ENV" '{
         if (index($0, "{{HARDWARE_ENV}}")) {
@@ -74,7 +76,7 @@ compile_settings() {
     # 3. Regenerate autostart.conf
     echo "Regenerating autostart.conf..."
     cp "$TMPL_DIR/autostart.conf.template" "$AUTOSTART_CONF"
-    
+
     # Dump normal startup entries
     jq -r '.startup[]? | "exec-once = \(.command)"' "$SETTINGS_FILE" >> "$AUTOSTART_CONF"
 
@@ -82,7 +84,7 @@ compile_settings() {
     if [[ $(jq -r 'if (if type == "object" and has("openGuideAtStartup") then .openGuideAtStartup else true end) then "yes" else "no" end' "$SETTINGS_FILE") == "yes" ]]; then
         echo "exec-once = bash -c 'sleep 1 && ~/.config/hypr/scripts/qs_manager.sh toggle guide'" >> "$AUTOSTART_CONF"
     fi
-        
+
     # 4. Regenerate keybindings.conf
     echo "Regenerating keybindings.conf..."
     cp "$TMPL_DIR/keybinds.conf.template" "$KEYBINDS_CONF"
@@ -99,11 +101,20 @@ compile_settings() {
     fi
 
     # Hash after changes
-    NEW_HASH=$(md5sum "$CONF_DIR"/*.conf 2>/dev/null | md5sum)
+    NEW_NONMON_HASH=$(md5sum "$SETTINGS_CONF" "$KEYBINDS_CONF" "$AUTOSTART_CONF" "$ENV_CONF" 2>/dev/null | md5sum)
+    NEW_MON_HASH=$(md5sum "$MONITORS_CONF" 2>/dev/null | md5sum)
 
-    # Only reload hyprland if actual configuration logic changed
-    if [ "$OLD_HASH" != "$NEW_HASH" ]; then
+    if [ "$OLD_MON_HASH" != "$NEW_MON_HASH" ]; then
+        # Monitor layout actually changed — full reload needed
+        echo "Monitor config changed, reloading Hyprland..."
         hyprctl reload
+    elif [ "$OLD_NONMON_HASH" != "$NEW_NONMON_HASH" ]; then
+        # Non-monitor settings changed (keybinds, autostart, input, env) — reload safe, no display flicker
+        echo "Non-monitor config changed, reloading Hyprland..."
+        hyprctl reload
+    else
+        # Nothing that affects Hyprland changed (e.g. uiScale, weatherApiKey) — skip reload entirely
+        echo "No Hyprland config changes detected, skipping reload."
     fi
 }
 
@@ -116,7 +127,7 @@ fi
 echo "Started watching settings directories for changes..."
 
 inotifywait -m -q -e close_write,moved_to --format '%w%f' "$(dirname "$SETTINGS_FILE")" "$(dirname "$ENV_FILE")" | while read -r filepath; do
-    
+
     # ---------------------------------------------------------
     # SETTINGS JSON TRIGGER
     # ---------------------------------------------------------

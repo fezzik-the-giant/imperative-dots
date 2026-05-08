@@ -81,6 +81,19 @@ Item {
     property var swLapData: []
 
     // =========================================================
+    // --- NOTIFICATIONS
+    // =========================================================
+    Process {
+        id: notifyProc
+    }
+
+    function notify(title, message, icon) {
+        notifyProc.running = false; // Reset to allow sequential calls
+        notifyProc.command = ["notify-send", "-a", "Quickshell Timer", "-i", icon, title, message];
+        notifyProc.running = true;
+    }
+
+    // =========================================================
     // --- GLOBAL SHORTCUTS
     // =========================================================
     function toggleActiveTabState() {
@@ -109,6 +122,12 @@ Item {
 
     property bool isTimerRunning: stateCache.timerTargetEpoch > 0
     property bool isTimerIdle: !isTimerRunning && stateCache.timerRemainingMs === stateCache.timerPresetMs
+
+    // Visibility gate — `parent` is the Loader from Floating.qml whose `visible`
+    // is bound to `index === activeIndex && expandProgress > 0.01`. Falling back
+    // to true keeps the module functional if loaded outside that Loader.
+    property bool widgetVisible: parent !== null && parent.visible !== undefined ? parent.visible : true
+    property bool anyTimerActive: stateCache.timerTargetEpoch > 0 || stateCache.swStartEpoch > 0 || stateCache.pomoTargetEpoch > 0
 
     property var interceptedShortcuts: {
         let arr = ["Return", "Enter"];
@@ -165,7 +184,8 @@ Item {
             id: globalTicker
             interval: 32
             repeat: true
-            running: root.visible
+            // The ticker must run even when the widget is hidden so notifications aren't delayed
+            running: root.anyTimerActive 
             onTriggered: {
                 let now = Date.now();
                 
@@ -175,6 +195,7 @@ Item {
                     if (rem <= 0) {
                         stateCache.timerRemainingMs = 0;
                         stateCache.timerTargetEpoch = 0;
+                        root.notify("Timer Finished", "Your timer for " + root.formatTime(stateCache.timerPresetMs, false) + " has completed.", "preferences-system-time");
                     } else {
                         stateCache.timerRemainingMs = rem;
                     }
@@ -193,6 +214,14 @@ Item {
                     if (rem <= 0) {
                         stateCache.pomoTargetEpoch = 0;
                         stateCache.pomoRemainingMs = 0;
+                        
+                        let phase = stateCache.pomoState; // Capture phase before it resets
+                        if (phase === 0) {
+                            root.notify("Focus Complete", "Great job! Time to take a well-deserved break.", "face-smile");
+                        } else {
+                            root.notify("Break Over", "Break time is up. Let's get back to focus!", "task-due");
+                        }
+                        
                         pomodoroView.handleSessionComplete();
                     } else {
                         stateCache.pomoRemainingMs = rem;
@@ -347,7 +376,7 @@ Item {
                     property real downOffset: 0
 
                     SequentialAnimation on upOffset {
-                        running: isSelected && root.isTimerIdle
+                        running: isSelected && root.isTimerIdle && root.widgetVisible
                         loops: Animation.Infinite
                         NumberAnimation { to: -root.s(4); duration: 500; easing.type: Easing.InOutSine }
                         NumberAnimation { to: 0; duration: 500; easing.type: Easing.InOutSine }
@@ -355,7 +384,7 @@ Item {
                     onIsSelectedChanged: if (!isSelected) { upOffset = 0; downOffset = 0; }
 
                     SequentialAnimation on downOffset {
-                        running: isSelected && root.isTimerIdle
+                        running: isSelected && root.isTimerIdle && root.widgetVisible
                         loops: Animation.Infinite
                         NumberAnimation { to: root.s(4); duration: 500; easing.type: Easing.InOutSine }
                         NumberAnimation { to: 0; duration: 500; easing.type: Easing.InOutSine }
@@ -803,6 +832,12 @@ Item {
                             anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 stateCache.pomoTargetEpoch = 0;
+                                let phase = stateCache.pomoState;
+                                if (phase === 0) {
+                                    root.notify("Pomodoro Skipped", "Focus session skipped. Moving to break.", "media-skip-forward");
+                                } else {
+                                    root.notify("Pomodoro Skipped", "Break skipped. Moving back to focus.", "media-skip-forward");
+                                }
                                 pomodoroView.handleSessionComplete();
                             }
                         }
@@ -812,4 +847,3 @@ Item {
         }
     }
 }
-

@@ -9,6 +9,8 @@ Item {
     id: window
     focus: true
 
+    Caching { id: paths }
+
     // --- Responsive Scaling Logic ---
     Scaler {
         id: scaler
@@ -23,7 +25,7 @@ Item {
     // Custom File Logger
     function debugLog(msg) {
         let safeMsg = msg.replace(/'/g, "'\\''");
-        Quickshell.execDetached(["sh", "-c", "echo '" + safeMsg + "' >> /tmp/monitor_popup.log"]);
+        Quickshell.execDetached(["sh", "-c", "echo '" + safeMsg + "' >> " + paths.logDir + "/monitor_popup.log"]);
     }
     
     // -------------------------------------------------------------------------
@@ -288,7 +290,7 @@ Item {
             let snapped = window.getPerimeterSnap(
                 mModel.uiX, mModel.uiY,
                 sModel.uiX, sModel.uiY,
-                sW, sH, mW, mH, 20
+                sW, sH, mW, mH, window.s(20)
             );
             
             let dist = Math.hypot(snapped.x - mModel.uiX, snapped.y - mModel.uiY);
@@ -437,7 +439,7 @@ Item {
                     let snapped = getTightSnap(
                         rects[i].x, rects[i].y,
                         r0.x, r0.y,
-                        r0.w, r0.h, rects[i].w, rects[i].h, 25
+                        r0.w, r0.h, rects[i].w, rects[i].h, 25 // Intentionally unscaled (Physical display coordinates)
                     );
                     let dist = Math.hypot(rects[i].x - snapped.x, rects[i].y - snapped.y);
                     if (dist < bestDist) {
@@ -771,8 +773,8 @@ Item {
                                 maxY = Math.max(maxY, m.uiY + h);
                             }
                             
-                            let requiredW = (maxX - minX) + 80;
-                            let requiredH = (maxY - minY) + 80;
+                            let requiredW = (maxX - minX) + window.s(80);
+                            let requiredH = (maxY - minY) + window.s(80);
                             
                             return Math.min(1.8 * scaler.baseScale, Math.min(window.s(340) / requiredW, window.s(240) / requiredH));
                         }
@@ -839,10 +841,10 @@ Item {
                                         width: (isPortrait ? model.resH : model.resW) / model.sysScale * window.uiScale
                                         height: (isPortrait ? model.resW : model.resH) / model.sysScale * window.uiScale
                                         
-                                        radius: 8
+                                        radius: window.s(8)
                                         color: isActive ? window.surface1 : window.crust
                                         border.color: isActive ? window.selectedResAccent : window.surface2
-                                        border.width: isActive ? 2 : 1
+                                        border.width: isActive ? window.s(2) : window.s(1)
                                         z: isActive ? 5 : 0
 
                                         Behavior on x { NumberAnimation { duration: 300; easing.type: Easing.OutQuint } }
@@ -855,20 +857,20 @@ Item {
 
                                         Item {
                                             anchors.centerIn: parent
-                                            width: 110
-                                            height: 80
+                                            width: window.s(110)
+                                            height: window.s(80)
                                             
                                             property real idealScale: 1.2 / transformNode.scale
                                             // Ensure the bounded box checks against the correct axis when visually rotated
                                             property real maxPhysicalScale: isPortrait 
                                                 ? Math.min((parent.width * 0.9) / height, (parent.height * 0.9) / width) 
                                                 : Math.min((parent.width * 0.9) / width, (parent.height * 0.9) / height)
-                                                
+                                            
                                             scale: Math.min(idealScale, maxPhysicalScale)
                                             
                                             ColumnLayout {
                                                 anchors.centerIn: parent
-                                                spacing: 2
+                                                spacing: window.s(2)
                                                 
                                                 // Restored Rotation for Multi-Monitor cards
                                                 rotation: model.transform * 90
@@ -877,7 +879,7 @@ Item {
                                                 Text { 
                                                     Layout.alignment: Qt.AlignHCenter
                                                     font.family: "Iosevka Nerd Font"
-                                                    font.pixelSize: 32
+                                                    font.pixelSize: window.s(32)
                                                     color: isActive ? window.selectedResAccent : window.text
                                                     text: "󰍹"
                                                     Behavior on color { ColorAnimation { duration: 300 } } 
@@ -886,14 +888,14 @@ Item {
                                                     Layout.alignment: Qt.AlignHCenter
                                                     font.family: "JetBrains Mono"
                                                     font.weight: Font.Black
-                                                    font.pixelSize: 13
+                                                    font.pixelSize: window.s(13)
                                                     color: window.text
                                                     text: model.name 
                                                 }
                                                 Text { 
                                                     Layout.alignment: Qt.AlignHCenter
                                                     font.family: "JetBrains Mono"
-                                                    font.pixelSize: 10
+                                                    font.pixelSize: window.s(10)
                                                     color: window.subtext0
                                                     text: model.resW + "x" + model.resH + " @ " + model.rate + "Hz" 
                                                 }
@@ -927,7 +929,7 @@ Item {
                                                     let mW = monitorCard.width;
                                                     let mH = monitorCard.height;
 
-                                                    let padding = 40;
+                                                    let padding = window.s(40);
                                                     let boundMinX = 999999, boundMinY = 999999;
                                                     let boundMaxX = -999999, boundMaxY = -999999;
                                                     
@@ -961,7 +963,7 @@ Item {
                                                         let snapped = window.getPerimeterSnap(
                                                             ghostDrag.x, ghostDrag.y,
                                                             sModel.uiX, sModel.uiY,
-                                                            sW, sH, mW, mH, 20
+                                                            sW, sH, mW, mH, window.s(20)
                                                         );
                                                         
                                                         let dist = Math.hypot(ghostDrag.x - snapped.x, ghostDrag.y - snapped.y);
@@ -1068,7 +1070,7 @@ Item {
                                 
                                 color: isSel ? Qt.alpha(accentColor, 0.15) : (resMa.containsMouse ? window.surface0 : window.mantle)
                                 border.color: isSel ? accentColor : (resMa.containsMouse ? window.surface1 : "transparent")
-                                border.width: isSel ? 2 : 1
+                                border.width: isSel ? window.s(2) : window.s(1)
                                 
                                 Behavior on color { ColorAnimation { duration: 200 } }
                                 Behavior on border.color { ColorAnimation { duration: 200 } }

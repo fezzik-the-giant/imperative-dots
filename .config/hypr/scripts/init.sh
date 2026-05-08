@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 
-# Use .local/state for persistent flags so it survives cache wipes
-FLAG="$HOME/.local/state/wallpaper_initialized"
-CACHE_IMG="$HOME/.cache/current_wallpaper.png"
-RELOAD_SCRIPT_PATH="$HOME/.config/hypr/scripts/quickshell/wallpaper/matugen_reload.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/caching.sh"
+qs_ensure_cache "wallpaper_picker"
+
+FLAG="$QS_STATE_WALLPAPER_PICKER/wallpaper_initialized"
+CACHE_IMG="$QS_CACHE_WALLPAPER_PICKER/current_wallpaper.png"
+
+RELOAD_SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/quickshell/wallpaper/matugen_reload.sh"
 
 # If the flag exists, just run matugen and the reload script, then exit
 if [ -f "$FLAG" ]; then

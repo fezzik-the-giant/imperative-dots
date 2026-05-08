@@ -3,7 +3,7 @@
 # ==============================================================================
 # Script Versioning & Initialization
 # ==============================================================================
-DOTS_VERSION="1.7.3"
+DOTS_VERSION="1.7.4"
 VERSION_FILE="$HOME/.local/state/imperative-dots-version"
 
 # ==============================================================================
@@ -897,10 +897,56 @@ prompt_optional_features_menu() {
         HAS_HISTORY=true
     fi
 
+    # --- UPDATE METADATA FETCH (MULTI-VERSION JUMP SAFE) ---
+    local FORCE_STARTUP_OVR=false
+    local UPDATE_WARN=""
+    
+    # Bash helpers for Semantic Version Comparison
+    ver_lt() {
+        [ "$1" = "$2" ] && return 1
+        [ "$1" = "$(printf '%s\n%s' "$1" "$2" | sort -V | head -n1)" ]
+    }
+    ver_le() {
+        [ "$1" = "$(printf '%s\n%s' "$1" "$2" | sort -V | head -n1)" ]
+    }
+
+    if command -v jq &>/dev/null && command -v curl &>/dev/null; then
+        local UPDATES_JSON=$(curl -s "https://raw.githubusercontent.com/ilyamiro/imperative-dots/${TARGET_BRANCH}/updates.json" 2>/dev/null)
+        if [ -n "$UPDATES_JSON" ]; then
+            
+            # Extract all version numbers that have force_startup_overwrite set to true
+            local OVERWRITE_VERSIONS=$(echo "$UPDATES_JSON" | jq -r '.videos[]? | select(.force_startup_overwrite == true) | .version')
+
+            # Only check versions if the user actually has a previous install
+            if [ "$HAS_HISTORY" = true ] && [ -n "$LOCAL_VERSION" ] && [ "$LOCAL_VERSION" != "Not Installed" ]; then
+                for v in $OVERWRITE_VERSIONS; do
+                    # Trigger if the breaking version (v) is NEWER than what they have, 
+                    # but OLDER OR EQUAL to the version they are currently installing.
+                    if ver_lt "$LOCAL_VERSION" "$v" && ver_le "$v" "$DOTS_VERSION"; then
+                        FORCE_STARTUP_OVR=true
+                        # Grab the warning message for the specific breaking update
+                        UPDATE_WARN=$(echo "$UPDATES_JSON" | jq -r ".videos[]? | select(.version == \"$v\") | .warning_message // \"\"")
+                        break # We found a breaking update in the path, lock it down and stop checking.
+                    fi
+                done
+            fi
+        fi
+    fi
+
+    if [[ "$FORCE_STARTUP_OVR" == "true" ]]; then
+        OPT_OVERRIDE_STARTUPS=true
+    fi
+    # -------------------------------------------------------
+
     while true; do
         draw_header
         echo -e "${BOLD}${C_CYAN}=== Optional Component Setup ===${RESET}\n"
         
+        if [[ "$FORCE_STARTUP_OVR" == "true" && -n "$UPDATE_WARN" && "$HAS_HISTORY" == true ]]; then
+            echo -e "${BOLD}${C_RED}=== MANDATORY UPDATE NOTICE ===${RESET}"
+            echo -e "${C_YELLOW}${UPDATE_WARN}${RESET}\n"
+        fi
+
         local S_SDDM=$( [ "$OPT_SDDM" = true ] && echo -e "${C_GREEN}[✓]${RESET}" || echo -e "${DIM}[ ]${RESET}" )
         local S_NVIM=$( [ "$OPT_NVIM" = true ] && echo -e "${C_GREEN}[✓]${RESET}" || echo -e "${DIM}[ ]${RESET}" )
         local S_ZSH=$( [ "$OPT_ZSH" = true ] && echo -e "${C_GREEN}[✓]${RESET}" || echo -e "${DIM}[ ]${RESET}" )
@@ -913,9 +959,18 @@ prompt_optional_features_menu() {
 
         if [ "$HAS_HISTORY" = true ]; then
             local S_KB_OVR=$( [ "$OPT_OVERRIDE_KEYBINDS" = true ] && echo -e "${C_GREEN}[✓]${RESET}" || echo -e "${DIM}[ ]${RESET}" )
-            local S_STARTUPS_OVR=$( [ "$OPT_OVERRIDE_STARTUPS" = true ] && echo -e "${C_GREEN}[✓]${RESET}" || echo -e "${DIM}[ ]${RESET}" )
-            MENU_ITEMS+="5. $S_KB_OVR Reset local keybinds to upstream defaults\n"
-            MENU_ITEMS+="6. $S_STARTUPS_OVR Overwrite Local Startups with Upstream Defaults\n"
+            
+            local S_STARTUPS_OVR
+            if [[ "$FORCE_STARTUP_OVR" == "true" ]]; then
+                S_STARTUPS_OVR="${C_GREEN}[✓ LOCKED]${RESET}"
+                MENU_ITEMS+="5. $S_KB_OVR Reset local keybinds to upstream defaults\n"
+                MENU_ITEMS+="6. $S_STARTUPS_OVR Overwrite Local Startups (MANDATORY FOR $DOTS_VERSION)\n"
+            else
+                S_STARTUPS_OVR=$( [ "$OPT_OVERRIDE_STARTUPS" = true ] && echo -e "${C_GREEN}[✓]${RESET}" || echo -e "${DIM}[ ]${RESET}" )
+                MENU_ITEMS+="5. $S_KB_OVR Reset local keybinds to upstream defaults\n"
+                MENU_ITEMS+="6. $S_STARTUPS_OVR Overwrite Local Startups with Upstream Defaults\n"
+            fi
+            
             MENU_ITEMS+="7. ${BOLD}${C_GREEN}Proceed with Installation / Update${RESET}\n"
             MENU_ITEMS+="8. ${DIM}Back to Main Menu${RESET}"
         else
@@ -931,7 +986,7 @@ prompt_optional_features_menu() {
             --layout=reverse \
             --border=rounded \
             --margin=1,2 \
-            --height=15 \
+            --height=18 \
             --prompt=" Options > " \
             --pointer=">" \
             --header=" SPACE or ENTER to toggle. Select Proceed when ready. ")
@@ -952,7 +1007,12 @@ prompt_optional_features_menu() {
                 ;;
             *"6."*) 
                 if [ "$HAS_HISTORY" = true ]; then
-                    OPT_OVERRIDE_STARTUPS=$([ "$OPT_OVERRIDE_STARTUPS" = true ] && echo false || echo true)
+                    if [[ "$FORCE_STARTUP_OVR" == "true" ]]; then
+                        echo -e "\n${C_RED}[!] This option is locked and required to prevent system breakage in this update.${RESET}"
+                        sleep 2.5
+                    else
+                        OPT_OVERRIDE_STARTUPS=$([ "$OPT_OVERRIDE_STARTUPS" = true ] && echo false || echo true)
+                    fi
                 else
                     return 1
                 fi
@@ -1301,18 +1361,126 @@ if [ "$INSTALL_NVIM" = true ]; then CONFIG_FOLDERS+=("nvim"); fi
 
 mkdir -p "$TARGET_CONFIG_DIR" "$BACKUP_DIR"
 
-for folder in "${CONFIG_FOLDERS[@]}"; do
-    TARGET_PATH="$TARGET_CONFIG_DIR/$folder"
-    SOURCE_PATH="$REPO_DIR/.config/$folder"
+DO_FULL_INSTALL=true
 
-    if [ -d "$SOURCE_PATH" ]; then
-        if [ -e "$TARGET_PATH" ] || [ -L "$TARGET_PATH" ]; then
-            mv "$TARGET_PATH" "$BACKUP_DIR/$folder"
-        fi
-        cp -r "$SOURCE_PATH" "$TARGET_PATH"
-        printf "  -> Copied %-31s ${C_GREEN}[ OK ]${RESET}\n" "$folder"
+if [ -z "$OLD_COMMIT" ]; then
+    echo -e "  -> No previous commit tracked. Forcing a full overwrite."
+    DO_FULL_INSTALL=true
+elif [ -n "$OLD_COMMIT" ] && [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
+    DO_FULL_INSTALL=false
+    if git -C "$REPO_DIR" cat-file -t "$OLD_COMMIT" >/dev/null 2>&1; then
+        echo -e "  -> Found existing installation. Analyzing updates between ${C_YELLOW}${OLD_COMMIT::7}${RESET} and ${C_YELLOW}${NEW_COMMIT::7}${RESET}..."
+    else
+        echo -e "  -> Previous commit missing from local tree. Forcing a full overwrite."
+        DO_FULL_INSTALL=true
     fi
-done
+elif [ "$OLD_COMMIT" == "$NEW_COMMIT" ] && [ -n "$OLD_COMMIT" ]; then
+    DO_FULL_INSTALL=false
+    echo -e "  -> Repository is up to date (${C_YELLOW}${NEW_COMMIT::7}${RESET}). Only applying upstream changes (None found)."
+fi
+
+if [ "$DO_FULL_INSTALL" = true ]; then
+    echo "  -> Performing Full Install / Overwrite..."
+
+    for folder in "${CONFIG_FOLDERS[@]}"; do
+        TARGET_PATH="$TARGET_CONFIG_DIR/$folder"
+        SOURCE_PATH="$REPO_DIR/.config/$folder"
+
+        if [ -d "$SOURCE_PATH" ]; then
+            if [ -e "$TARGET_PATH" ] || [ -L "$TARGET_PATH" ]; then
+                mv "$TARGET_PATH" "$BACKUP_DIR/$folder"
+            fi
+            cp -r "$SOURCE_PATH" "$TARGET_PATH"
+            printf "  -> Copied %-31s ${C_GREEN}[ OK ]${RESET}\n" "$folder"
+        fi
+    done
+else
+    # Partial Update Logic (Git Diff)
+    CHANGED_FILES=""
+    DELETED_FILES=""
+    
+    if [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
+        CHANGED_FILES=$(git -C "$REPO_DIR" diff --name-only --no-renames --diff-filter=AM "$OLD_COMMIT" "$NEW_COMMIT" | grep "^\.config/")
+        DELETED_FILES=$(git -C "$REPO_DIR" diff --name-only --no-renames --diff-filter=D "$OLD_COMMIT" "$NEW_COMMIT" | grep "^\.config/")
+    fi
+
+    if [ -n "$CHANGED_FILES" ] || [ -n "$DELETED_FILES" ]; then
+        echo -e "  -> Performing ${C_GREEN}Partial Update${RESET} based on upstream changes..."
+        
+        # 1. Handle Deleted/Moved files first
+        if [ -n "$DELETED_FILES" ]; then
+            echo "$DELETED_FILES" | while IFS= read -r file; do
+                FOLDER_NAME=$(echo "$file" | cut -d'/' -f2)
+                
+                valid_folder=false
+                for f in "${CONFIG_FOLDERS[@]}"; do
+                    if [ "$f" == "$FOLDER_NAME" ]; then
+                        valid_folder=true
+                        break
+                    fi
+                done
+
+                if [ "$valid_folder" = true ]; then
+                    TARGET_FILE="$HOME/$file"
+                    REL_PATH="${file#\.config/}"
+                    
+                    if [ -f "$TARGET_FILE" ]; then
+                        mkdir -p "$(dirname "$BACKUP_DIR/$REL_PATH")"
+                        cp "$TARGET_FILE" "$BACKUP_DIR/$REL_PATH"
+                        rm -f "$TARGET_FILE"
+                        echo "    -> Removed obsolete file: $file"
+                    fi
+                fi
+            done
+        fi
+
+        # 2. Handle Added/Modified files
+        if [ -n "$CHANGED_FILES" ]; then
+            echo "$CHANGED_FILES" | while IFS= read -r file; do
+                FOLDER_NAME=$(echo "$file" | cut -d'/' -f2)
+
+                valid_folder=false
+                for f in "${CONFIG_FOLDERS[@]}"; do
+                    if [ "$f" == "$FOLDER_NAME" ]; then
+                        valid_folder=true
+                        break
+                    fi
+                done
+
+                if [ "$valid_folder" = true ]; then
+                    SOURCE_FILE="$REPO_DIR/$file"
+                    TARGET_FILE="$HOME/$file"
+                    REL_PATH="${file#\.config/}"
+
+                    # Protect settings.json from upstream overwrite during partial update
+                    if [[ "$file" == *"settings.json" ]]; then
+                        echo "    -> Skipped (user-owned): $file"
+                        continue
+                    fi
+
+                    if [ -f "$TARGET_FILE" ]; then
+                        mkdir -p "$(dirname "$BACKUP_DIR/$REL_PATH")"
+                        cp "$TARGET_FILE" "$BACKUP_DIR/$REL_PATH"
+                    fi
+
+                    mkdir -p "$(dirname "$TARGET_FILE")"
+                    cp "$SOURCE_FILE" "$TARGET_FILE"
+                    echo "    -> Updated: $file"
+                fi
+            done
+        fi
+        printf "  -> Partial update complete %-21s ${C_GREEN}[ OK ]${RESET}\n" ""
+    else
+        echo "  -> No target config files were changed upstream. Local files kept intact."
+    fi
+    
+    # We must explicitly stage the current settings.json into the backup dir 
+    # so the SSoT JSON merge logic later in the script can find and read it
+    if [ -f "$TARGET_CONFIG_DIR/hypr/settings.json" ]; then
+        mkdir -p "$BACKUP_DIR/hypr"
+        cp "$TARGET_CONFIG_DIR/hypr/settings.json" "$BACKUP_DIR/hypr/settings.json"
+    fi
+fi
 
 # --- 4.5 Bake Hardware Variables into Template ---
 # By doing this now, we eliminate the need for the hacky hardware_env.conf file
@@ -1684,8 +1852,8 @@ WALLPAPER_DIR="$WALLPAPER_DIR"
 TELEMETRY_ID="$TELEMETRY_ID"
 EOF
 
-rm -f ~/.cache/qs_update_pending 
-rm -f ~/.cache/wallpaper_initialized
+rm -f ~/.cache/quickshell/updater/update_pending
+rm -f ~/.local/state/quickshell/wallpaper_picker/wallpaper_initialized
 
 printf "  -> Configuration and version state saved %-7s ${C_GREEN}[ OK ]${RESET}\n" ""
 

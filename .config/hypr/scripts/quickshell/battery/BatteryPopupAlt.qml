@@ -10,6 +10,8 @@ import "../"
 Item {
     id: window
 
+    Caching { id: paths }
+
     // --- RECEIVE THE DBUS LIST FROM MAIN.QML ---
     property var notifModel
 
@@ -139,7 +141,7 @@ Item {
     Process {
         id: dndInit
         running: true
-        command: ["bash", "-c", "mkdir -p ~/.cache && cat ~/.cache/qs_dnd 2>/dev/null || echo '0'"]
+	command: ["bash", "-c", "cat " + paths.getCacheDir("dnd") + "/state 2>/dev/null || echo '0'"]
         stdout: StdioCollector {
             onStreamFinished: {
                 window.dndEnabled = (this.text.trim() === "1");
@@ -397,7 +399,7 @@ Item {
                                     anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         window.dndEnabled = !window.dndEnabled;
-                                        Quickshell.execDetached(["sh", "-c", "mkdir -p ~/.cache && echo '" + (window.dndEnabled ? "1" : "0") + "' > ~/.cache/qs_dnd"]);
+                                        Quickshell.execDetached(["sh", "-c", "echo '" + (window.dndEnabled ? "1" : "0") + "' > " + paths.getCacheDir("dnd") + "/state"]);
                                     }
                                 }
                             }
@@ -800,7 +802,8 @@ Item {
                             onClicked: { 
                                 exitAnim.start(); // Trigger graceful UI exit
                                 Quickshell.execDetached(["bash", "-c", "~/.config/hypr/scripts/exit.sh"]); 
-                                Quickshell.execDetached(["sh", "-c", "echo 'close' > /tmp/qs_widget_state"]); 
+				Quickshell.execDetached(["sh", "-c", "echo 'close' > " + paths.runDir + "/widget_state"]);
+
                             }
                         }
                     }
@@ -1362,7 +1365,7 @@ Item {
 
                                     Timer {
                                         id: exitTimer; interval: 500 
-                                        onTriggered: { Quickshell.execDetached(["sh", "-c", cmd]); Quickshell.execDetached(["sh", "-c", "echo 'close' > /tmp/qs_widget_state"]); }
+                                        onTriggered: { Quickshell.execDetached(["sh", "-c", cmd]); Quickshell.execDetached(["sh", "-c", "echo 'close' > " + paths.runDir + "/widget_state"]); }
                                     }
                                 }
                             }
